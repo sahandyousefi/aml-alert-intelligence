@@ -113,4 +113,59 @@ COMPACT = FuncFormatter(compact)
 
 
 def value_axis(ax, axis: str = "y", nbins: int = 5) -> None:
-    """Round ticks and gridlines on the value axis, a
+    """Round ticks and gridlines on the value axis, a baseline on the category side."""
+    target = ax.yaxis if axis == "y" else ax.xaxis
+    target.set_major_locator(MaxNLocator(nbins=nbins, steps=[1, 2, 2.5, 5, 10]))
+    target.set_major_formatter(COMPACT)
+    ax.grid(axis="x" if axis == "y" else "y", visible=False)
+    ax.grid(axis=axis, visible=True)
+    ax.spines["bottom"].set_visible(axis == "y")
+    ax.spines["left"].set_visible(axis == "x")
+
+
+def _pixel_size(ax):
+    """Width and height of one screen pixel in data units. Call after setting limits."""
+    box = ax.get_window_extent()
+    x0, x1 = ax.get_xlim()
+    y0, y1 = ax.get_ylim()
+    return (x1 - x0) / box.width, (y1 - y0) / box.height
+
+
+def bars(ax, positions, values, colors, horizontal: bool = False, slot: float = 1.0):
+    """Slim bars with a rounded data end and a square base.
+
+    Set the axis limits first: the corner radius and the slim width are worked out
+    in pixels, so they look the same in every figure.
+    """
+    px_x, px_y = _pixel_size(ax)
+    px_across = px_y if horizontal else px_x     # pixel size across the bar
+    px_along = px_x if horizontal else px_y      # pixel size along the bar
+    thick = min(0.6 * slot, BAR_MAX_PX * px_across)
+
+    for pos, val, color in zip(positions, values, colors):
+        if val <= 0:
+            continue
+        r_along = min(CORNER_PX * px_along, val / 2)
+        r_across = min(CORNER_PX * px_across, thick / 2)
+        if horizontal:
+            xy, w, h = (0, pos - thick / 2), val, thick
+            body = Rectangle(xy, max(val - r_along, 0), thick)
+            radius, aspect = r_along, r_across / r_along
+        else:
+            xy, w, h = (pos - thick / 2, 0), thick, val
+            body = Rectangle(xy, thick, max(val - r_along, 0))
+            radius, aspect = r_across, r_along / r_across
+        cap = FancyBboxPatch(xy, w, h, boxstyle=f"round,pad=0,rounding_size={radius}",
+                             mutation_aspect=aspect, linewidth=0, facecolor=color)
+        body.set(linewidth=0, facecolor=color)
+        ax.add_patch(cap)
+        ax.add_patch(body)
+
+
+def save(fig, cfg: dict, name: str) -> Path:
+    """Save a figure as PNG under outputs/figures on Drive and return its path."""
+    out_dir = cfg["paths"]["outputs"] / "figures"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}.png"
+    fig.savefig(path, dpi=220, bbox_inches="tight", pad_inches=0.25)
+    return path
