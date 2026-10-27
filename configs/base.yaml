@@ -15,3 +15,10 @@ paths:
 data:
   kaggle_dataset: ealtman2019/ibm-transactions-for-anti-money-laundering-aml
   variant: HI-Small
+
+spark:
+  app_name: aml-alert-intelligence
+  master: local[*]
+  driver_memory: 8g
+  shuffle_partitions: 8
+  timezone: UTC
