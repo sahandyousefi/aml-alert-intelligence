@@ -16,6 +16,14 @@ data:
   kaggle_dataset: ealtman2019/ibm-transactions-for-anti-money-laundering-aml
   variant: HI-Small
 
+# Chronological split on whole days (inclusive end dates).
+# train: up to train_end, val: up to val_end, test: everything after.
+# tail_start marks the simulation tail, reported separately in test results.
+split:
+  train_end: "2022-09-06"
+  val_end: "2022-09-08"
+  tail_start: "2022-09-11"
+
 spark:
   app_name: aml-alert-intelligence
   master: local[*]
