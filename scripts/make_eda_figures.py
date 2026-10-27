@@ -25,6 +25,12 @@ from aml_alert_intelligence.spark import get_spark
 SOURCE = "Source: IBM AMLworld, HI-Small, all 5,078,345 transactions"
 
 
+def day_label(d) -> str:
+    """A date as it reads in a title, for example "Sept 10"."""
+    d = pd.Timestamp(d)
+    return f"{d:%b} {d.day}".replace("Sep ", "Sept ")
+
+
 # Figure 1: daily volume and laundering rate ------------------------------------
 
 def daily_volume_data(tx) -> pd.DataFrame:
@@ -51,9 +57,11 @@ def daily_volume_plot(daily: pd.DataFrame, cfg: dict):
                                       gridspec_kw={"height_ratios": [1, 1]})
 
     # Lay out the figure first, so bar sizes are measured on the final layout.
+    # Titles are built from the data, so they can never disagree with the chart.
     viz.frame(
         fig,
-        "After Sept 10, normal traffic stops while laundering keeps going",
+        f"After {day_label(daily.loc[last_normal, 'date'])}, "
+        "normal traffic stops while laundering keeps going",
         "Transactions and laundering rate per day. The shaded days are kept "
         "in the data and reported separately.",
         SOURCE,
@@ -124,10 +132,95 @@ def daily_volume(tx, cfg):
     return daily_volume_plot(daily_volume_data(tx), cfg)
 
 
+# Figure 2: the chronological split ----------------------------------------------
+
+SPLIT_NAMES = {"train": "Train", "val": "Validation", "test": "Test"}
+
+
+def split_timeline_data(tx) -> pd.DataFrame:
+    """One row per calendar day: its split, tail flag, transactions, and laundering."""
+    return (
+        tx.groupBy(F.to_date("timestamp").alias("date"), "split", "is_tail")
+          .agg(F.count("*").alias("transactions"),
+               F.sum("is_laundering").alias("laundering"))
+          .orderBy("date")
+          .toPandas()
+    )
+
+
+def split_timeline_plot(days: pd.DataFrame, cfg: dict):
+    """Laundering per day, colored by split, with a key of each split's totals above."""
+    x = list(range(len(days)))
+    span = {s: f"{day_label(g['date'].min())} to {pd.Timestamp(g['date'].max()).day}"
+            for s, g in days.groupby("split")}
+
+    fig, ax = plt.subplots(figsize=(9, 5.2))
+    viz.frame(
+        fig,
+        f"Train on {span['train']}, tune on {span['val']}, test on {span['test']}",
+        "Laundering transactions per day, colored by split. Whole days only, "
+        "so no transaction sits on a boundary.",
+        "Source: IBM AMLworld, HI-Small. Split dates from configs/base.yaml.",
+    )
+    # Extra room: a key row above the plot and an axis label below it.
+    height = fig.get_figheight()
+    fig.subplots_adjust(top=1 - (viz.HEADER_IN + 0.9) / height,
+                        bottom=(viz.FOOTER_IN + 0.35) / height)
+
+    # The simulation tail, shaded as in Figure 1.
+    tail = days["is_tail"].to_numpy()
+    first_tail = int(tail.argmax())
+    ax.axvspan(first_tail - 0.5, len(days) - 0.5, color=viz.BAND, zorder=0)
+
+    y_max = days["laundering"].max() * 1.15
+    ax.set_xlim(-0.6, len(days) - 0.4)
+    ax.set_ylim(0, y_max)
+    viz.bars(ax, x, days["laundering"], [viz.SPLIT_COLORS[s] for s in days["split"]])
+    viz.value_axis(ax, "y", nbins=4)
+    ax.text(first_tail - 0.2, y_max * 0.95, "Simulation tail",
+            fontsize=10, color=viz.INK_SECONDARY, va="top")
+
+    # A colored rule over the days of each split, and a key with its totals.
+    above = ax.get_xaxis_transform()        # x in data units, y in axes fraction
+    key_x = {"train": 0.0, "val": 0.34, "test": 0.64}
+    for split, group in days.groupby("split", sort=False):
+        lo, hi = group.index.min(), group.index.max()
+        color = viz.SPLIT_COLORS[split]
+        ax.plot([lo - 0.4, hi + 0.4], [1.02, 1.02], transform=above, color=color,
+                linewidth=3, solid_capstyle="butt", clip_on=False)
+
+        n_tx = int(group["transactions"].sum())
+        n_laund = int(group["laundering"].sum())
+        detail = f"{n_tx:,} transactions\n{n_laund:,} laundering"
+        if split == "test":
+            before_tail = int(group.loc[~group["is_tail"], "laundering"].sum())
+            detail += f", {before_tail:,} before the tail"
+        kx = key_x[split]
+        ax.scatter([kx + 0.008], [1.30], transform=ax.transAxes, marker="s", s=60,
+                   color=color, clip_on=False)
+        ax.text(kx + 0.025, 1.30, SPLIT_NAMES[split], transform=ax.transAxes,
+                fontsize=11.5, fontweight="semibold", color=viz.INK, va="center")
+        ax.text(kx, 1.255, detail, transform=ax.transAxes, fontsize=10,
+                color=viz.INK_SECONDARY, va="top", linespacing=1.45)
+
+    dates = pd.to_datetime(days["date"])
+    ax.set_xticks(x, [str(d.day) for d in dates])
+    ax.set_xlabel(f"Day of {dates.iloc[0]:%B %Y}", labelpad=8)
+
+    path = viz.save(fig, cfg, "fig2_split_timeline")
+    plt.close(fig)
+    return path
+
+
+def split_timeline(tx, cfg):
+    return split_timeline_plot(split_timeline_data(tx), cfg)
+
+
 # Registry and entry point -------------------------------------------------------
 
 FIGURES = {
     "daily_volume": daily_volume,
+    "split_timeline": split_timeline,
 }
 
 
