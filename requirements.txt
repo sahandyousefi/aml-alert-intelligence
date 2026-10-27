@@ -1,0 +1,19 @@
+# Runtime: Google Colab (T4 GPU).
+# torch is intentionally NOT listed: Colab ships a CUDA-matched build,
+# and reinstalling it can break the GPU stack and PyTorch Geometric.
+# Dependencies are added per phase. Exact versions are pinned
+# (pip freeze) once the first real results exist.
+
+# --- Phase 1-2: data pipeline + baseline ---
+pyspark
+pandas
+numpy
+pyarrow
+pyyaml
+scikit-learn
+xgboost
+matplotlib
+kaggle
+
+# --- Dev ---
+pytest
