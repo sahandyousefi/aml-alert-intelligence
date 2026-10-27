@@ -12,8 +12,11 @@ pyarrow
 pyyaml
 scikit-learn
 xgboost
-matplotlib
 kaggle
+
+# --- Figures ---
+matplotlib
+font-source-sans-pro
 
 # --- Dev ---
 pytest
