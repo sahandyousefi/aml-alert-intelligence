@@ -1,0 +1,17 @@
+# Base configuration for AML Alert Intelligence.
+# Storage paths are relative to paths.root (Google Drive in Colab).
+
+project:
+  name: aml-alert-intelligence
+  seed: 42
+
+paths:
+  root: /content/drive/MyDrive/aml-alert-intelligence
+  raw_data: data/raw
+  processed_data: data/processed
+  checkpoints: checkpoints
+  outputs: outputs
+
+data:
+  kaggle_dataset: ealtman2019/ibm-transactions-for-anti-money-laundering-aml
+  variant: HI-Small
