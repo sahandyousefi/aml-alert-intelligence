@@ -1,4 +1,6 @@
-"""Load raw AMLworld transactions into a Spark DataFrame with an explicit schema."""
+"""Load raw AMLworld transactions and manage the processed Parquet copy."""
+
+from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -41,3 +43,21 @@ def load_transactions(spark: SparkSession, cfg: dict) -> DataFrame:
         .csv(str(raw_file(cfg, "transactions")))
     )
     return df.withColumn("timestamp", F.to_timestamp("timestamp", TIMESTAMP_FORMAT))
+
+
+def transactions_parquet_path(cfg: dict) -> Path:
+    """Processed Parquet location for the configured dataset variant."""
+    variant = cfg["data"]["variant"]
+    return cfg["paths"]["processed_data"] / f"{variant}_transactions.parquet"
+
+
+def ingest_transactions(spark: SparkSession, cfg: dict) -> Path:
+    """Parse the raw CSV once and save it as Parquet for all later steps."""
+    out = transactions_parquet_path(cfg)
+    load_transactions(spark, cfg).write.mode("overwrite").parquet(str(out))
+    return out
+
+
+def read_transactions(spark: SparkSession, cfg: dict) -> DataFrame:
+    """Read the processed transactions Parquet."""
+    return spark.read.parquet(str(transactions_parquet_path(cfg)))
