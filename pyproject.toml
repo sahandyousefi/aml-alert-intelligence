@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aml-alert-intelligence"
+dynamic = ["version"]
+description = "End-to-end AML alert decision system: GNN detection, explainability, MILP investigator triage, and evidence-grounded LLM SAR drafting."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Sahand Yousefi" }]
+
+[tool.setuptools.dynamic]
+version = { attr = "aml_alert_intelligence.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
