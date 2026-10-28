@@ -216,11 +216,89 @@ def split_timeline(tx, cfg):
     return split_timeline_plot(split_timeline_data(tx), cfg)
 
 
+# Figure 3: laundering risk by payment format -------------------------------------
+
+def payment_format_data(tx) -> pd.DataFrame:
+    """Training days only: transactions, laundering, and lift for each payment format."""
+    table = (
+        tx.filter(F.col("split") == "train")
+          .groupBy("payment_format")
+          .agg(F.count("*").alias("transactions"),
+               F.sum("is_laundering").alias("laundering"))
+          .toPandas()
+    )
+    base_rate = table["laundering"].sum() / table["transactions"].sum()
+    table["lift"] = table["laundering"] / table["transactions"] / base_rate
+    table.attrs["base_rate"] = base_rate
+    return table.sort_values(["lift", "transactions"], ascending=False).reset_index(drop=True)
+
+
+def payment_format_plot(table: pd.DataFrame, cfg: dict):
+    """Lift per format as slim horizontal bars, with the counts behind each bar beside it."""
+    top = table.iloc[0]
+    share = top["laundering"] / table["laundering"].sum()
+    rows = list(range(len(table)))[::-1]            # highest lift at the top
+
+    fig, ax = plt.subplots(figsize=(9, 4.9))
+    viz.frame(
+        fig,
+        f"{top['payment_format']} carries {share:.0%} of training laundering "
+        f"at {top['lift']:.1f} times the average rate",
+        "Lift: the laundering rate within a payment format divided by the overall "
+        f"training rate ({table.attrs['base_rate']:.3%}).",
+        f"Source: IBM AMLworld, HI-Small, training days only (through "
+        f"{day_label(cfg['split']['train_end'])}), so the test set does not shape feature choices.",
+    )
+    # Room on the right for the counts column, and above the plot for its header.
+    height = fig.get_figheight()
+    fig.subplots_adjust(right=0.74, top=1 - (viz.HEADER_IN + 0.3) / height)
+
+    lift_max = table["lift"].max()
+    ax.set_xlim(0, lift_max * 1.18)
+    ax.set_ylim(-0.6, len(table) - 0.4)
+    colors = [viz.ACCENT if i == 0 else viz.DATA_GREY for i in range(len(table))]
+    viz.bars(ax, rows, table["lift"], colors, horizontal=True)
+    ax.set_yticks(rows, table["payment_format"])
+    viz.value_axis(ax, "x", nbins=4)
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}x"))
+
+    # The average (lift 1) as a reference line behind the bars.
+    ax.axvline(1, color=viz.INK_MUTED, linewidth=1, linestyle=(0, (3, 3)), zorder=0.8)
+    ax.text(1, 1.01, "average", transform=ax.get_xaxis_transform(), ha="center",
+            va="bottom", fontsize=10, color=viz.INK_MUTED)
+
+    # Lift at the end of each bar; short bars put it past the average line.
+    for y, (_, r) in zip(rows, table.iterrows()):
+        strong = r["payment_format"] == top["payment_format"]
+        label = f"{r['lift']:.2f}x" if r["laundering"] > 0 else "none"
+        ax.text(max(r["lift"], 1) + lift_max * 0.02, y, label, va="center",
+                fontsize=10.5, color=viz.INK if strong else viz.INK_SECONDARY,
+                fontweight="semibold" if strong else "normal")
+
+    # A column of the counts behind each bar, so no lift is read without its size.
+    side = ax.get_yaxis_transform()                 # x in axes fraction, y in data units
+    ax.text(1.04, 1.01, "Laundering / transactions", transform=ax.transAxes,
+            fontsize=10, fontweight="semibold", color=viz.INK_SECONDARY, va="bottom")
+    for y, (_, r) in zip(rows, table.iterrows()):
+        ax.text(1.04, y, f"{int(r['laundering']):,} / {int(r['transactions']):,}",
+                transform=side, va="center", fontsize=10.5, color=viz.INK_SECONDARY)
+
+    path = viz.save(fig, cfg, "fig3_payment_format")
+    plt.close(fig)
+    return path
+
+
+def payment_format(tx, cfg):
+    return payment_format_plot(payment_format_data(tx), cfg)
+
+
+
 # Registry and entry point -------------------------------------------------------
 
 FIGURES = {
     "daily_volume": daily_volume,
     "split_timeline": split_timeline,
+    "payment_format": payment_format,
 }
 
 
