@@ -293,12 +293,112 @@ def payment_format(tx, cfg):
 
 
 
+# Figure 4: laundering by amount band ----------------------------------------------
+
+MIN_CASES = 20          # a band with fewer laundering cases is drawn as unreliable
+FAINT = "#e6eaef"       # lighter than the context grey, for unreliable bands
+
+
+def money(v: float) -> str:
+    """An amount in short form: $10, $1K, $10M.
+
+    The dollar sign is escaped, because matplotlib reads text between two
+    dollar signs as a math formula.
+    """
+    for size, unit in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if v >= size:
+            return rf"\${v / size:g}{unit}"
+    return rf"\${v:g}" if v >= 1 else rf"\${v:.2f}"
+
+
+def amount_band_data(tx) -> pd.DataFrame:
+    """Training days, US Dollar to US Dollar: transactions and laundering per order of magnitude."""
+    usd = tx.filter(
+        (F.col("split") == "train")
+        & (F.col("payment_currency") == "US Dollar")
+        & (F.col("receiving_currency") == "US Dollar")
+    )
+    # Each band is named by its lower edge: 1, 10, 100, 1000, ...
+    band = F.pow(F.lit(10.0), F.floor(F.log10(F.greatest("amount_paid", F.lit(0.01)))))
+    table = (
+        usd.groupBy(band.alias("band"))
+           .agg(F.count("*").alias("transactions"),
+                F.sum("is_laundering").alias("laundering"))
+           .orderBy("band")
+           .toPandas()
+    )
+    base_rate = table["laundering"].sum() / table["transactions"].sum()
+    table["lift"] = table["laundering"] / table["transactions"] / base_rate
+    return table
+
+
+def amount_band_plot(table: pd.DataFrame, cfg: dict):
+    """Lift per amount band; the reliable above-average bands carry the accent."""
+    reliable = table["laundering"] >= MIN_CASES
+    focus = reliable & (table["lift"] > 1)
+    lo, hi = table.loc[focus, "band"].min(), table.loc[focus, "band"].max() * 10
+    in_range = int(table.loc[focus, "laundering"].sum())
+    total = int(table["laundering"].sum())
+    x = list(range(len(table)))
+
+    fig, ax = plt.subplots(figsize=(9, 4.9))
+    viz.frame(
+        fig,
+        f"Laundering concentrates between {money(lo)} and {money(hi)}",
+        f"{in_range:,} of {total:,} US Dollar laundering cases ({in_range / total:.0%}) "
+        "fall in this range. Lift by order of magnitude of the amount.",
+        f"Source: IBM AMLworld, HI-Small, training days only (through "
+        f"{day_label(cfg['split']['train_end'])}), US Dollar transfers. "
+        f"Faint bars rest on fewer than {MIN_CASES} laundering cases.",
+    )
+    height = fig.get_figheight()
+    fig.subplots_adjust(top=1 - (viz.HEADER_IN + 0.05) / height,
+                        bottom=(viz.FOOTER_IN + 0.35) / height)
+
+    lift_max = table["lift"].max()
+    ax.set_xlim(-0.6, len(table) - 0.4)
+    ax.set_ylim(0, lift_max * 1.12)
+    colors = [viz.ACCENT if f else (viz.DATA_GREY if r else FAINT)
+              for f, r in zip(focus, reliable)]
+    viz.bars(ax, x, table["lift"], colors)
+    viz.value_axis(ax, "y", nbins=4)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:g}x"))
+
+    # The average (lift 1) as a reference line behind the bars.
+    ax.axhline(1, color=viz.INK_MUTED, linewidth=1, linestyle=(0, (3, 3)), zorder=0.8)
+    ax.text(len(table) - 0.45, 1, "average", ha="right", va="bottom",
+            fontsize=10, color=viz.INK_MUTED)
+
+    # Labels: the lift on the accent bars, the case count on tall unreliable ones.
+    pad = lift_max * 0.02
+    for i, r in table.iterrows():
+        if focus[i]:
+            ax.text(i, r["lift"] + pad, f"{r['lift']:.2f}x", ha="center", va="bottom",
+                    fontsize=10.5, fontweight="semibold", color=viz.INK)
+        elif not reliable[i] and r["lift"] > 1:
+            ax.text(i, r["lift"] + pad, f"{int(r['laundering'])} cases", ha="center",
+                    va="bottom", fontsize=10, color=viz.INK_MUTED)
+
+    ax.set_xticks(x, [money(b) for b in table["band"]])
+    ax.tick_params(axis="x", labelsize=10)
+    ax.set_xlabel("Amount paid (each band runs from its label to ten times it)", labelpad=8)
+
+    path = viz.save(fig, cfg, "fig4_amount_bands")
+    plt.close(fig)
+    return path
+
+
+def amount_bands(tx, cfg):
+    return amount_band_plot(amount_band_data(tx), cfg)
+
+
 # Registry and entry point -------------------------------------------------------
 
 FIGURES = {
     "daily_volume": daily_volume,
     "split_timeline": split_timeline,
     "payment_format": payment_format,
+    "amount_bands": amount_bands,
 }
 
 
