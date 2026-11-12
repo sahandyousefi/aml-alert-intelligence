@@ -15,6 +15,13 @@ from pyspark.sql import functions as F
 FAMILIES = {
     "A": "Transaction",
     "B": "Account attributes",
+    "C": "Account behavior",
+}
+
+# Printed under a family's heading in the feature dictionary.
+FAMILY_NOTES = {
+    "C": "Every window ends one minute before the transfer, so entries in the same minute "
+         "are left out. Self-transfers get features but never count as history.",
 }
 
 KINDS = ("numeric", "categorical", "flag")
@@ -61,6 +68,54 @@ def _party(side: str) -> list[Feature]:
                 f"{title} owner's banks (log10)",
                 f"log10 of the number of banks at which the {who}'s owner holds accounts"),
     ]
+
+
+def _history(side: str) -> list[Feature]:
+    """Family C features for one side: the account's own transfers before this one."""
+    who = {"from": "sender", "to": "receiver"}[side]
+    title = who.capitalize()
+
+    def count(col: str, label: str, definition: str) -> Feature:
+        return Feature(f"{side}_{col}", "C", "numeric", lambda: F.col(f"{side}_{col}"),
+                       f"{title}: {label}", definition)
+
+    def dollars(col: str, label: str, definition: str) -> Feature:
+        return Feature(f"{side}_{col}_log", "C", "numeric",
+                       lambda: F.log10(F.col(f"{side}_{col}") + 1),
+                       f"{title}: {label} (log10)", definition)
+
+    account = f"the {who}'s account"
+    features = [count("entries_1h", "transfers in the past hour",
+                      f"Transfers sent or received by {account} in the 60 minutes before")]
+    for hours in (24, 72):
+        features += [
+            count(f"in_{hours}h", f"transfers received, past {hours} hours",
+                  f"Transfers received by {account} in the {hours} hours before"),
+            count(f"out_{hours}h", f"transfers sent, past {hours} hours",
+                  f"Transfers sent by {account} in the {hours} hours before"),
+            dollars(f"in_usd_{hours}h", f"US dollars received, past {hours} hours",
+                    f"log10(1 + US dollars received by {account} in the {hours} hours before)"),
+            dollars(f"out_usd_{hours}h", f"US dollars sent, past {hours} hours",
+                    f"log10(1 + US dollars sent by {account} in the {hours} hours before)"),
+        ]
+    features += [
+        count("new_payers_24h", "new payers, past 24 hours",
+              f"Accounts that paid {account} in the past 24 hours with no payment between "
+              "them in the 72 hours before"),
+        count("new_payees_24h", "new payees, past 24 hours",
+              f"Accounts that {account} paid in the past 24 hours with no payment between "
+              "them in the 72 hours before"),
+        count("minutes_since_last", "minutes since previous transfer",
+              f"Minutes since {account} last sent or received a transfer, capped at 72 hours "
+              "(4,320), which also stands for no history"),
+    ]
+    return features
+
+
+def _passthrough() -> Column:
+    """Share of this payment covered by what the sender received in the past 24 hours."""
+    amount, inflow = F.col("amount_paid_usd"), F.col("from_in_usd_24h")
+    return F.coalesce(F.least(amount, inflow) / F.when(amount > 0, amount), F.lit(0.0))
 
 
 FEATURES: list[Feature] = [
@@ -113,6 +168,23 @@ FEATURES: list[Feature] = [
             lambda: F.col("same_owner"),
             "Same owner",
             "1 if both accounts belong to the same owner, self-transfers included"),
+    # Family C: each party's own activity before the transfer, from the account ledger.
+    *_history("from"),
+    *_history("to"),
+    Feature("pair_prior_72h", "C", "numeric",
+            lambda: F.col("pair_prior_72h"),
+            "Earlier transfers between the pair, past 72 hours",
+            "Earlier transfers from this sender to this receiver in the 72 hours before"),
+    Feature("reverse_prior_72h", "C", "numeric",
+            lambda: F.col("reverse_prior_72h"),
+            "Earlier transfers back, past 72 hours",
+            "Earlier transfers from this receiver to this sender in the 72 hours before; "
+            "money flowing back is a sign of a cycle"),
+    Feature("sender_passthrough_24h", "C", "numeric",
+            _passthrough,
+            "Payment covered by the sender's recent inflow",
+            "min(amount, US dollars the sender received in the 24 hours before) / amount; "
+            "1 means the sender received at least this much in the past day"),
 ]
 
 # Left out on purpose, with the reason. Shown in the feature dictionary.
@@ -151,8 +223,10 @@ def dictionary_markdown() -> str:
     ]
     for key, title in FAMILIES.items():
         members = [f for f in FEATURES if f.family == key]
-        lines += ["", f"## {key}. {title}", "",
-                  "| Feature | Type | Label | Definition |", "| --- | --- | --- | --- |"]
+        lines += ["", f"## {key}. {title}", ""]
+        if key in FAMILY_NOTES:
+            lines += [FAMILY_NOTES[key], ""]
+        lines += ["| Feature | Type | Label | Definition |", "| --- | --- | --- | --- |"]
         lines += [f"| `{f.name}` | {f.kind} | {f.label} | {f.definition} |" for f in members]
     lines += ["", "## Excluded on purpose", "", "| Left out | Reason |", "| --- | --- |"]
     lines += [f"| {what} | {why} |" for what, why in EXCLUDED]
